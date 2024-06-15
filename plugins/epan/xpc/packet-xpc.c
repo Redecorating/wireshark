@@ -26,13 +26,6 @@
 
 #include <epan/packet.h>   /* Required dissection API header */
 
-/* IF AND ONLY IF your protocol dissector exposes code to other dissectors
- * (which most dissectors don't need to do) then the 'public' prototypes and
- * data structures can go in the header file packet-xpc.h. If not, then
- * a header file is not needed at all and this #include statement can be
- * removed. */
-
-
 /* Prototypes */
 void proto_reg_handoff_xpc(void);
 void proto_register_xpc(void);
@@ -42,18 +35,85 @@ static int proto_xpc;
 static int hf_xpc_magic;
 static int hf_xpc_version;
 static int hf_xpc_type;
+static int hf_xpc_obj_bool;
+static int hf_xpc_obj_int64;
+static int hf_xpc_obj_uint64;
+static int hf_xpc_obj_double;
+static int hf_xpc_obj_string;
+static int hf_xpc_obj_size; //padded to multiple of 4 bytes
+static int hf_xpc_obj_entry_count;
+static int hf_xpc_obj_dict_key;
 
 static dissector_handle_t xpc_handle;
 
 /* Initialize the subtree pointers */
 static int ett_xpc;
 
-/* A sample #define of the minimum length (in bytes) of the protocol data.
- * If data is received with fewer than this many bytes it is rejected by
- * the current dissector. */
-#define XPC_MIN_LENGTH 16
+#define XPC_MIN_LENGTH 12
 #define XPC_MAGIC 0x42133742
 #define XPC_VERSION 5
+
+#define XPC_TYPE(x) x<<12
+
+enum xpc_value_type {
+    XPC_NULL = XPC_TYPE(1),
+    XPC_BOOL = XPC_TYPE(2),
+    XPC_INT64 = XPC_TYPE(3),
+    XPC_UINT64 = XPC_TYPE(4),
+    XPC_DOUBLE = XPC_TYPE(5),
+    XPC_POINTER = XPC_TYPE(6),
+    XPC_DATE = XPC_TYPE(7),
+    XPC_DATA = XPC_TYPE(8),
+    XPC_STRING = XPC_TYPE(9),
+    XPC_UUID = XPC_TYPE(10),
+    XPC_FD = XPC_TYPE(11),
+    XPC_SHMEM = XPC_TYPE(12),
+    XPC_MACH_SEND = XPC_TYPE(13),
+    XPC_ARRAY = XPC_TYPE(14),
+    XPC_DICTIONARY = XPC_TYPE(15),
+    XPC_ERROR = XPC_TYPE(16),
+    XPC_CONNECTION = XPC_TYPE(17),
+    XPC_ENDPOINT = XPC_TYPE(18),
+    XPC_SERIALIZER = XPC_TYPE(19),
+    XPC_PIPE = XPC_TYPE(20),
+    XPC_MACH_RECV = XPC_TYPE(21),
+    XPC_BUNDLE = XPC_TYPE(22),
+    XPC_SERVICE = XPC_TYPE(23),
+    XPC_SERVICE_INSTANCE = XPC_TYPE(24),
+    XPC_ACTIVITY = XPC_TYPE(25),
+    XPC_FILE_TRANSFER = XPC_TYPE(26),
+};
+
+static const value_string xpcTypeNames[] = {
+    { XPC_NULL, "XPC_NULL" },
+    { XPC_BOOL, "XPC_BOOL" },
+    { XPC_INT64, "XPC_INT64" },
+    { XPC_UINT64, "XPC_UINT64" },
+    { XPC_DOUBLE, "XPC_DOUBLE" },
+    { XPC_POINTER, "XPC_POINTER" },
+    { XPC_DATE, "XPC_DATE" },
+    { XPC_DATA, "XPC_DATA" },
+    { XPC_STRING, "XPC_STRING" },
+    { XPC_UUID, "XPC_UUID" },
+    { XPC_FD, "XPC_FD" },
+    { XPC_SHMEM, "XPC_SHMEM" },
+    { XPC_MACH_SEND, "XPC_MACH_SEND" },
+    { XPC_ARRAY, "XPC_ARRAY" },
+    { XPC_DICTIONARY, "XPC_DICTIONARY" },
+    { XPC_ERROR, "XPC_ERROR" },
+    { XPC_CONNECTION, "XPC_CONNECTION" },
+    { XPC_ENDPOINT, "XPC_ENDPOINT" },
+    { XPC_SERIALIZER, "XPC_SERIALIZER" },
+    { XPC_PIPE, "XPC_PIPE" },
+    { XPC_MACH_RECV, "XPC_MACH_RECV" },
+    { XPC_BUNDLE, "XPC_BUNDLE" },
+    { XPC_SERVICE, "XPC_SERVICE" },
+    { XPC_SERVICE_INSTANCE, "XPC_SERVICE_INSTANCE" },
+    { XPC_ACTIVITY, "XPC_ACTIVITY" },
+    { XPC_FILE_TRANSFER, "XPC_FILE_TRANSFER" }
+};
+
+static int dissect_xpc_object(tvbuff_t *tvb, unsigned offset, proto_tree *tree);
 
 /* Code to actually dissect the packets */
 static int
@@ -66,26 +126,10 @@ dissect_xpc(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree,
     /* Other misc. local variables. */
     unsigned offset = 0;
 
-    /*** HEURISTICS ***/
 
-    /* First, if at all possible, do some heuristics to check if the packet
-     * cannot possibly belong to your protocol.  This is especially important
-     * for protocols directly on top of TCP or UDP where port collisions are
-     * common place (e.g., even though your protocol uses a well known port,
-     * someone else may set up, for example, a web server on that port which,
-     * if someone analyzed that web server's traffic in Wireshark, would result
-     * in Wireshark handing an HTTP packet to your dissector).
-     *
-     * For example:
-     */
-
-    /* Check that the packet is long enough for it to belong to us. */
     if (tvb_reported_length(tvb) < XPC_MIN_LENGTH)
         return 0;
 
-    /* Fetch some values from the packet header using tvb_get_*(). If these
-     * values are not valid/possible in your protocol then return 0 to give
-     * some other dissector a chance to dissect it. */
     if (tvb_get_guint32(tvb,0,ENC_LITTLE_ENDIAN) != XPC_MAGIC)
         return 0;
 
@@ -147,8 +191,7 @@ dissect_xpc(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree,
     offset += 4;
     proto_tree_add_item(xpc_tree, hf_xpc_version, tvb, offset, 4, ENC_LITTLE_ENDIAN);
     offset += 4;
-    proto_tree_add_item(xpc_tree, hf_xpc_type, tvb, offset, 4, ENC_LITTLE_ENDIAN);
-    offset += 4;
+    offset += dissect_xpc_object(tvb, offset, xpc_tree);
 
 
     /* If this protocol has a sub-dissector call it here, see section 1.8 of
@@ -158,6 +201,107 @@ dissect_xpc(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree,
      * or may not be the total captured packet as we return here). */
     return tvb_captured_length(tvb);
 }
+
+static int
+dissect_xpc_object(tvbuff_t *tvb, unsigned offset, proto_tree *tree)
+{
+    uint32_t type = tvb_get_guint32(tvb, offset, ENC_LITTLE_ENDIAN);
+    //printf("enter %s, offset=%u, type=0x%x\n",__func__, offset,type);
+    proto_tree_add_item(tree, hf_xpc_type, tvb, offset, 4, ENC_LITTLE_ENDIAN);
+    offset += 4;
+    switch (type) {
+        case XPC_BOOL:
+            proto_tree_add_item(tree, hf_xpc_obj_bool, tvb, offset, 4, ENC_LITTLE_ENDIAN);
+            offset+= 4;
+            break;
+        case XPC_INT64:
+            proto_tree_add_item(tree, hf_xpc_obj_int64, tvb, offset, 8, ENC_LITTLE_ENDIAN);
+            offset+= 8;
+            break;
+        case XPC_UINT64:
+            proto_tree_add_item(tree, hf_xpc_obj_uint64, tvb, offset, 8, ENC_LITTLE_ENDIAN);
+            offset+= 8;
+            break;
+        case XPC_DOUBLE:
+            proto_tree_add_item(tree, hf_xpc_obj_double, tvb, offset, 8, ENC_LITTLE_ENDIAN);
+            offset+= 8;
+            break;
+        case XPC_DATA:
+            break;
+        case XPC_STRING:
+            uint32_t string_length = tvb_get_guint32(tvb, offset, ENC_LITTLE_ENDIAN);
+            // round up to 32 bit words
+            if (string_length % 4) {
+                string_length += (4-(string_length%4));
+            }
+            proto_tree_add_item(tree, hf_xpc_obj_size, tvb, offset, 4, ENC_LITTLE_ENDIAN);
+            offset += 4;
+            proto_tree_add_item(tree, hf_xpc_obj_string, tvb, offset, string_length, ENC_NA);
+            offset += string_length;
+            break;
+        case XPC_UUID:
+            break;
+        case XPC_ARRAY:
+            break;
+        case XPC_DICTIONARY:
+            uint32_t dict_length = tvb_get_guint32(tvb, offset, ENC_LITTLE_ENDIAN);
+            // round up to 32 bit words
+            if (dict_length % 4) {
+                dict_length += (4-(dict_length%4));
+            }
+            uint32_t dict_end = dict_length + offset;
+            proto_tree_add_item(tree, hf_xpc_obj_size, tvb, offset, 4, ENC_LITTLE_ENDIAN);
+            offset += 4;
+            uint32_t dict_entry_count = tvb_get_guint32(tvb, offset, ENC_LITTLE_ENDIAN);
+            proto_tree_add_item(tree, hf_xpc_obj_entry_count, tvb, offset, 4, ENC_LITTLE_ENDIAN);
+            offset += 4;
+
+            uint8_t c;
+            int strlength = 0;
+            for (unsigned i = 0; i < dict_entry_count; i++) {
+                proto_tree *dict_entry_tree = proto_item_add_subtree(tree, ett_xpc);
+                
+                // TODO find where wireshark implements strlen
+                strlength = 0;
+                do {
+                    c = tvb_get_guint8(tvb, offset+strlength);
+                    strlength++;
+                } while (c);
+                if (strlength % 4) {
+                    strlength += (4-(strlength%4));
+                }
+
+                proto_tree_add_item(dict_entry_tree, hf_xpc_obj_dict_key, tvb, offset, strlength, ENC_NA);
+                offset += strlength;
+                offset = dissect_xpc_object(tvb, offset, dict_entry_tree);
+            }
+            offset = dict_end;
+
+            break;
+        case XPC_NULL:
+        case XPC_POINTER:
+        case XPC_DATE:
+        case XPC_FD:
+        case XPC_SHMEM:
+        case XPC_MACH_SEND:
+        case XPC_ERROR:
+        case XPC_CONNECTION:
+        case XPC_ENDPOINT:
+        case XPC_SERIALIZER:
+        case XPC_PIPE:
+        case XPC_MACH_RECV:
+        case XPC_BUNDLE:
+        case XPC_SERVICE:
+        case XPC_SERVICE_INSTANCE:
+        case XPC_ACTIVITY:
+        case XPC_FILE_TRANSFER:
+            break;
+    }
+
+    return offset;
+}
+
+
 
 /* Register the protocol with Wireshark.
  *
@@ -185,6 +329,54 @@ proto_register_xpc(void)
         { &hf_xpc_type,
           { "XPC Object Type", "xpc.type",
             FT_UINT32, BASE_HEX,
+            VALS(xpcTypeNames), 0x0,
+            NULL, HFILL }
+        },
+        { &hf_xpc_obj_size,
+          { "XPC Object Contents Size", "xpc.obj.size",
+            FT_UINT32, BASE_DEC,
+            NULL, 0x0,
+            NULL, HFILL }
+        },
+        { &hf_xpc_obj_entry_count,
+          { "XPC Object Entry Count", "xpc.obj.count",
+            FT_UINT32, BASE_DEC,
+            NULL, 0x0,
+            NULL, HFILL }
+        },
+        { &hf_xpc_obj_dict_key,
+          { "XPC Dictionary Key", "xpc.obj.count",
+            FT_STRINGZ, 0,
+            NULL, 0x0,
+            NULL, HFILL }
+        },
+        { &hf_xpc_obj_bool,
+          { "XPC Bool", "xpc.obj.bool",
+            FT_BOOLEAN, 0,
+            NULL, 0x0,
+            NULL, HFILL }
+        },
+        { &hf_xpc_obj_int64,
+          { "XPC int64", "xpc.obj.int64",
+            FT_INT64, BASE_DEC,
+            NULL, 0x0,
+            NULL, HFILL }
+        },
+        { &hf_xpc_obj_uint64,
+          { "XPC uint64", "xpc.obj.uint64",
+            FT_UINT64, BASE_DEC,
+            NULL, 0x0,
+            NULL, HFILL }
+        },
+        { &hf_xpc_obj_double,
+          { "XPC Double", "xpc.obj.double",
+            FT_DOUBLE, BASE_DEC,
+            NULL, 0x0,
+            NULL, HFILL }
+        },
+        { &hf_xpc_obj_string,
+          { "XPC String", "xpc.obj.string",
+            FT_STRINGZ, 0,
             NULL, 0x0,
             NULL, HFILL }
         },
@@ -203,48 +395,16 @@ proto_register_xpc(void)
     proto_register_subtree_array(ett, array_length(ett));
 
 
-    /* Use register_dissector() here so that the dissector can be
-     * found by name by other protocols, by Lua, by Export PDU,
-     * by custom User DLT dissection, etc. Some protocols may require
-     * multiple uniquely named dissectors that behave differently
-     * depending on the caller, e.g. over TCP directly vs over TLS.
-     */
     xpc_handle = register_dissector("xpc", dissect_xpc,
             proto_xpc);
 
 }
 
-/* If this dissector uses sub-dissector registration add a registration routine.
- * This exact format is required because a script is used to find these
- * routines and create the code that calls these routines.
- *
- * If this function is registered as a prefs callback (see
- * prefs_register_protocol above) this function is also called by Wireshark's
- * preferences manager whenever "Apply" or "OK" are pressed. In that case, it
- * should accommodate being called more than once by use of the static
- * 'initialized' variable included below.
- *
- * This form of the reg_handoff function is used if you perform registration
- * functions which are dependent upon prefs. See below this function for a
- * simpler form which can be used if there are no prefs-dependent registration
- * functions.
- */
 void
 proto_reg_handoff_xpc(void)
 {
     xpc_handle = create_dissector_handle(dissect_xpc, proto_xpc);
 }
-
-#if 0
-
-/* Simpler form of proto_reg_handoff_xpc which can be used if there are
- * no prefs-dependent registration function calls. */
-void
-proto_reg_handoff_xpc(void)
-{
-    dissector_add_uint_range_with_preference("tcp.port", xpc_TCP_PORTS, xpc_handle);
-}
-#endif
 
 /*
  * Editor modelines  -  https://www.wireshark.org/tools/modelines.html

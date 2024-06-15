@@ -98,7 +98,7 @@ dissect_rxpc(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree,
     /* Fetch some values from the packet header using tvb_get_*(). If these
      * values are not valid/possible in your protocol then return 0 to give
      * some other dissector a chance to dissect it. */
-    uint64_t magic = tvb_get_guint32(tvb, 9, ENC_LITTLE_ENDIAN);
+    uint32_t magic = tvb_get_guint32(tvb, 9, ENC_LITTLE_ENDIAN);
 
     if (magic != RXPC_MAGIC)
         return 0;
