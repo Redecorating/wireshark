@@ -149,13 +149,10 @@ static const value_string bKitKernelCmdIds[] = {
 
 static int hf_bkit_response_in;
 static int hf_bkit_response_to;
-static int hf_bkit_response_time;
 
 typedef struct _bkit_transaction_t {
     uint32_t req_frame;
     uint32_t rep_frame;
-    nstime_t req_time;
-    char poison;
 } bkit_transaction_t;
 
 typedef struct _bkit_conv_info_t {
@@ -288,55 +285,41 @@ dissect_bkit(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree,
                 bkit_info->pdus=wmem_map_new(wmem_file_scope(), g_direct_hash, g_direct_equal);
                 conversation_add_proto_data(conversation, proto_bkit, bkit_info);
             }
+
             bkit_trans = (bkit_transaction_t *)wmem_map_lookup(bkit_info->pdus, GUINT_TO_POINTER(seq_num));
             if (!bkit_trans) {
-                bkit_trans=wmem_new(pinfo->pool, bkit_transaction_t);
-                    bkit_trans->poison = 0x41;
-                    bkit_trans->rep_frame = 0;
-                    bkit_trans->req_frame = 0;
-                    bkit_trans->req_time = pinfo->fd->abs_ts;
-                    wmem_map_insert(bkit_info->pdus, GUINT_TO_POINTER(seq_num), (void *)bkit_trans);
+                //TODO: check for collisons
+                bkit_trans=wmem_new(wmem_file_scope(), bkit_transaction_t);
+                bkit_trans->rep_frame = 0;
+                bkit_trans->req_frame = 0;
+                wmem_map_insert(bkit_info->pdus, GUINT_TO_POINTER(seq_num), (void *)bkit_trans);
             }
             if (!PINFO_FD_VISITED(pinfo)) {
-                if (hf_bkit_env_is_reply) {
+                if (bkit_env_is_reply) {
                     // this is the reply
-                    //TODO: check for collisons
                     bkit_trans->rep_frame = pinfo->num;
-                    if (bkit_trans->poison != 0x41) {
-                        printf("a, %d, %d\n", bkit_trans->req_frame, pinfo->num);
-                    }
-                    
                 } else {
                     // this is the request
-                    
-                    //bkit_trans->poison = 0x41;
-                    //bkit_trans->rep_frame = 0;
                     bkit_trans->req_frame = pinfo->num;
-                    bkit_trans->req_time = pinfo->fd->abs_ts;
-
                 }
-            
-            } else {
             }
 
-            //TODO: try makeing it so every packet has trans, even if its 0
-            if (hf_bkit_env_is_reply) {
-                    // request
-                    proto_item *it;
-                    nstime_t ns;
-                    nstime_delta(&ns, &pinfo->fd->abs_ts, &bkit_trans->req_time);
-
-                    it = proto_tree_add_uint(bkit_tree, hf_bkit_response_in,
-                            tvb, 0, 0, bkit_trans->rep_frame);
-                    proto_item_set_generated(it);
-                    it = proto_tree_add_time(bkit_tree, hf_bkit_response_time, tvb, 0, 0, &ns);
-                    proto_item_set_generated(it);
+            if (bkit_env_is_reply) {
+                //reply
+                if (bkit_trans->req_frame) {
+                proto_item *it;
+                it = proto_tree_add_uint(bkit_tree, hf_bkit_response_to,
+                        tvb, 0, 0, bkit_trans->req_frame);
+                proto_item_set_generated(it);
+                }
             } else {
-                    //reply
-                    proto_item *it;
-                    it = proto_tree_add_uint(bkit_tree, hf_bkit_response_to,
-                            tvb, 0, 0, bkit_trans->req_frame);
-                    proto_item_set_generated(it);
+                // request
+                if (bkit_trans->rep_frame) {
+                proto_item *it;
+                it = proto_tree_add_uint(bkit_tree, hf_bkit_response_in,
+                        tvb, 0, 0, bkit_trans->rep_frame);
+                proto_item_set_generated(it);
+                }
             }
         }
 
@@ -473,11 +456,6 @@ proto_register_bkit(void)
             FT_FRAMENUM, BASE_NONE, FRAMENUM_TYPE(FT_FRAMENUM_REQUEST), 0x0,
             "This is a response to the BKIT request in this frame", HFILL }
         },
-        { &hf_bkit_response_time,
-            { "Response Time", "bkit.response_time",
-            FT_RELATIVE_TIME, BASE_NONE, NULL, 0x0,
-            "The time between the Call and the Reply", HFILL }
-        }
     };
 
     /* Setup protocol subtree array */
