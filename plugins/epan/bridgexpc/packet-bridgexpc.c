@@ -26,6 +26,7 @@
 
 
 #include <epan/packet.h>   /* Required dissection API header */
+#include <plist.h>
 
 /* Some protocols may need code from other dissectors, as here for
  * ssl_dissector_add()
@@ -44,6 +45,11 @@ static int hf_bridgexpc_type;
 static int hf_bridgexpc_length;
 static int hf_bridgexpc_bplist;
 
+static int hf_bkit_msg_type;
+static int hf_bkit_is_reply;
+static int hf_bkit_msg_id;
+static int hf_bkit_data;
+
 
 static dissector_handle_t bridgexpc_handle;
 
@@ -60,6 +66,24 @@ static const value_string bridgexpcTypeNames[] = {
     {1, "BRIDGE_XPC_TYPE_HELLO" },
     {2, "BRIDGE_XPC_TYPE_DATA" },
 };
+
+#include <stdio.h>
+int bplist_to_xml(const char *bplistData, unsigned bplistLength, char **xml_dest, uint32_t *xml_len) {
+    plist_t plist;
+    plist_err_t ret = plist_from_bin(bplistData, bplistLength, &plist);
+    if (ret != PLIST_ERR_SUCCESS) {
+        printf("failed to make plist (%d)\n",ret );
+        return ret;
+    }
+
+    ret = plist_to_xml(plist, xml_dest, xml_len);
+    if (ret) {
+        printf("failed to make xml (%d)\n", ret);
+    }
+
+    plist_free(plist);
+    return ret;
+}
 
 
 /* Code to actually dissect the packets */
@@ -84,7 +108,6 @@ dissect_bridgexpc(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree,
     if (magic != BRIDGE_XPC_MAGIC)
         return 0;
 
-    col_set_str(pinfo->cinfo, COL_PROTOCOL, "BRIDGE_XPC");
 
 
     col_clear(pinfo->cinfo,COL_INFO);
@@ -105,26 +128,41 @@ dissect_bridgexpc(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree,
     uint64_t length = tvb_get_guint64(tvb, offset, ENC_LITTLE_ENDIAN);
     offset += 8;
 
-    tvbuff_t *next_tvb = tvb_new_subset_remaining(tvb, offset);
+    tvbuff_t *next_tvb;
 
+    dissector_handle_t json_handle = find_dissector_add_dependency("json", proto_bridgexpc);
+    dissector_handle_t xml_handle = find_dissector_add_dependency("xml", proto_bridgexpc);
+    dissector_handle_t bkit_handle = find_dissector_add_dependency("bkit", proto_bridgexpc);
     if (msgType == 1) {
+        next_tvb = tvb_new_subset_remaining(tvb, offset);
         //HELLO, disect json
-
-       dissector_handle_t json_handle = find_dissector_add_dependency("json", proto_bridgexpc);
        call_dissector(json_handle, next_tvb, pinfo, bridgexpc_tree);
        offset += length;
+       col_add_fstr(pinfo->cinfo, COL_INFO, "Hello from");
+        //proto_tree_children_foreach(bridgexpc_tree, proto_tree_print_node, data);
 
     } else if (msgType == 2) {
+        tvbuff_t *plist_tvb = tvb_new_subset_remaining(tvb, offset);
+        call_dissector(bkit_handle, plist_tvb, pinfo, bridgexpc_tree);
         //DATA, disect a binary plist
         // I don't want to think too much, lets just pretend this is transformed data
-        // and use plistutil to convert to json
-
-        dissector_handle_t bplist_handle = find_dissector_add_dependency("bplist", proto_bridgexpc);
-        call_dissector(bplist_handle, next_tvb, pinfo, bridgexpc_tree);
-        //proto_tree_add_item(bridgexpc_tree, hf_bridgexpc_bplist, tvb, offset, length, ENC_LITTLE_ENDIAN);
-        offset += length;
+        // and use plistutil to convert to xml
+        char *xml_dest=0;
+        uint32_t xml_len=0;
+        bplist_to_xml(tvb_get_ptr(tvb,offset, length), length, &xml_dest, &xml_len);
+        if (xml_dest) {
+            // make sure this is malloced by wireshark func
+            unsigned char *decompressed_buffer = (unsigned char*)wmem_alloc(pinfo->pool, xml_len);
+            memcpy(decompressed_buffer, xml_dest, xml_len);
+            plist_mem_free(xml_dest);
+            next_tvb = tvb_new_child_real_data(tvb, decompressed_buffer, xml_len, xml_len);
+            add_new_data_source(pinfo, next_tvb, "Decoded BPlist");
+            call_dissector(xml_handle, next_tvb, pinfo, bridgexpc_tree);
+            offset += length;
+        }
 
     }
+    col_set_str(pinfo->cinfo, COL_PROTOCOL, "BRIDGE_XPC");
 
 
     return tvb_captured_length(tvb);
@@ -163,6 +201,30 @@ proto_register_bridgexpc(void)
         },
         { &hf_bridgexpc_bplist,
             { "Bridge XPC Binary Property List", "bridgexpc.bplist",
+                FT_BYTES, 0,
+                NULL, 0x0,
+                NULL, HFILL }
+        },
+        { &hf_bkit_msg_type,
+            { "Biometric Kit Message Type", "bkit.msg_type",
+                FT_UINT64, BASE_DEC,
+                NULL, 0x0,
+                NULL, HFILL }
+        },
+        { &hf_bkit_is_reply,
+            { "Biometric Kit Is Reply", "bkit.is_reply",
+                FT_BOOLEAN, 0,
+                NULL, 0x0,
+                NULL, HFILL }
+        },
+        { &hf_bkit_msg_id,
+            { "Biometric Kit Message ID", "bkit.msg_id",
+                FT_GUID, 0,
+                NULL, 0x0,
+                NULL, HFILL }
+        },
+        { &hf_bkit_data,
+            { "Biometric Kit Message Data", "bkit.data",
                 FT_BYTES, 0,
                 NULL, 0x0,
                 NULL, HFILL }

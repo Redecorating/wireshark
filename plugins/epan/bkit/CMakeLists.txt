@@ -10,10 +10,10 @@
 include(WiresharkPlugin)
 
 # Plugin name and version info (major minor micro extra)
-set_module_info(bridgexpc 0 0 1 0)
+set_module_info(bkit 0 0 1 0)
 
 set(DISSECTOR_SRC
-	packet-bridgexpc.c
+	packet-bkit.c
 )
 
 set(PLUGIN_FILES
@@ -32,17 +32,17 @@ register_plugin_files(plugin.c
 	${DISSECTOR_SRC}
 )
 
-add_wireshark_plugin_library(bridgexpc epan)
+add_wireshark_plugin_library(bkit epan)
 
-target_include_directories(bridgexpc SYSTEM PUBLIC /usr/include/plist)
-target_link_libraries(bridgexpc epan /usr/lib/libplist-2.0.so)
+target_include_directories(bkit SYSTEM PUBLIC /usr/include/plist)
+target_link_libraries(bkit epan /usr/lib/libplist-2.0.so)
 
-install_plugin(bridgexpc epan)
+install_plugin(bkit epan)
 
 file(GLOB DISSECTOR_HEADERS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}" "*.h")
 CHECKAPI(
 	NAME
-	  bridgexpc
+	  bkit
 	SWITCHES
 	  --group dissectors-prohibited
 	  --group dissectors-restricted

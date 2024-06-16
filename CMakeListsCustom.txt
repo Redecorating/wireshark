@@ -14,6 +14,7 @@ set(CUSTOM_PLUGIN_SRC_DIR
 	plugins/epan/rxpc
 	plugins/epan/xpc
 	plugins/epan/bridgexpc
+	plugins/epan/bkit
 # or
 #	plugins/epan/foo
 )

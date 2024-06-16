@@ -21,6 +21,8 @@
 /* Define the name for the logging domain (try to avoid collisions with existing domains) */
 #define WS_LOG_DOMAIN "xpc"
 
+#include <stdio.h> //TODO
+
 /* Global header providing a minimum base set of required macros and APIs */
 #include <wireshark.h>
 
