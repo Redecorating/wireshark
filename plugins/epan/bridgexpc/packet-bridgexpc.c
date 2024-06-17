@@ -53,7 +53,7 @@ static int hf_bkit_data;
 
 static dissector_handle_t bridgexpc_handle;
 
-#define BRIDGE_XPC_TCP_PORT 49198 //TODO: use a range of ports, this port changes each boot
+#define BRIDGE_XPC_TCP_PORTS "49000-49500"
 
 /* Initialize the subtree pointers */
 static int ett_bridgexpc;
@@ -85,10 +85,28 @@ int bplist_to_xml(const char *bplistData, unsigned bplistLength, char **xml_dest
     return ret;
 }
 
+#include <epan/dissectors/packet-tcp.h>
+
+static int
+dissect_bridgexpc_message(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree,
+        void *data _U_);
+
+static unsigned
+get_bridgexpc_message_len(packet_info *pinfo _U_, tvbuff_t *tvb, int offset, void *data _U_) {
+    return tvb_get_guint64(tvb, offset+8, ENC_LITTLE_ENDIAN) + BRIDGE_XPC_MIN_LENGTH;
+}
+
+static int
+dissect_bridgexpc(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree,
+        void *data _U_) {
+    tcp_dissect_pdus(tvb, pinfo, tree, true, BRIDGE_XPC_MIN_LENGTH,
+            get_bridgexpc_message_len, dissect_bridgexpc_message, data);
+    return tvb_captured_length(tvb);
+}
 
 /* Code to actually dissect the packets */
 static int
-dissect_bridgexpc(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree,
+dissect_bridgexpc_message(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree,
         void *data _U_)
 {
     /* Set up structures needed to add the protocol subtree and manage it */
@@ -96,17 +114,19 @@ dissect_bridgexpc(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree,
     proto_tree *bridgexpc_tree;
     /* Other misc. local variables. */
     unsigned offset = 0;
-
-
-    /* Check that the packet is long enough for it to belong to us. */
     if (tvb_reported_length(tvb) < BRIDGE_XPC_MIN_LENGTH)
         return 0;
 
-    //TODO: also warn on version != 1
     uint16_t magic = tvb_get_guint16(tvb, 0, ENC_LITTLE_ENDIAN);
 
     if (magic != BRIDGE_XPC_MAGIC)
         return 0;
+    uint16_t version = tvb_get_guint16(tvb, 2, ENC_LITTLE_ENDIAN);
+    if (version != 1)
+        return 0;
+
+
+    uint64_t length = tvb_get_guint64(tvb, 8, ENC_LITTLE_ENDIAN);
 
 
 
@@ -125,7 +145,6 @@ dissect_bridgexpc(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree,
     uint32_t msgType = tvb_get_guint32(tvb, offset, ENC_LITTLE_ENDIAN);
     offset += 4;
     proto_tree_add_item(bridgexpc_tree, hf_bridgexpc_length, tvb, offset, 8, ENC_LITTLE_ENDIAN);
-    uint64_t length = tvb_get_guint64(tvb, offset, ENC_LITTLE_ENDIAN);
     offset += 8;
 
     tvbuff_t *next_tvb;
@@ -261,7 +280,7 @@ proto_register_bridgexpc(void)
 void proto_reg_handoff_bridgexpc(void) {
 
     bridgexpc_handle = create_dissector_handle(dissect_bridgexpc, proto_bridgexpc);
-    dissector_add_uint("tcp.port", BRIDGE_XPC_TCP_PORT, bridgexpc_handle);
+    dissector_add_uint_range_with_preference("tcp.port", BRIDGE_XPC_TCP_PORTS, bridgexpc_handle);
 }
 
 

@@ -35,130 +35,23 @@
 /* Prototypes */
 void proto_register_bkit(void);
 
-/* Initialize the protocol and registered fields */
-static int proto_bkit;
+// XXX Its easier to have this in a seperate file while im developing
+#include "packet-bkit.h"
 
-static int hf_bkit_env_type;
-static int hf_bkit_env_is_reply;
-static int hf_bkit_env_msg_id;
-static int hf_bkit_cmd_id;
+tvbuff_t *add_data_src_from_plist_data(tvbuff_t *tvb, packet_info *pinfo, plist_t data_obj, char *srcName) {
+    plist_type data_type = plist_get_node_type(data_obj);
 
-static int hf_bkit_krn_data;
-static int hf_bkit_krn_magic;
-static int hf_bkit_krn_cmd_id;
-static int hf_bkit_krn_version;
-static int hf_bkit_krn_in_val;
-// and then the krn cmd may have more stuff after this.
-
-//static expert_field ei_BKIT_EXPERTABBREV;
-
-static dissector_handle_t bkit_handle;
-
-/* Initialize the subtree pointers */
-static int ett_bkit;
-static int ett_bkit_kern;
-
-static const value_string bkitEnvTypeNames[] = {
-    {0L, "PING" },
-    {1L, "MESSAGE" },
-};
-
-static const value_string bKitCommandIds[] = {
-    {0, "GetBridgeVersion" },
-    {1, "GetServiceOpened" },
-    {2, "GetSystemBootTime" },
-    {3, "PerformCommand" },
-    {4, "SetIORegistryProperty" },
-    {5, "GetCalibrationDataFromEEPROM" },
-    {6, "MachContinousTime" },
-    {7, "GetMachTimebaseInfo" },
-    {8, "GetOSVersion" },
-    {10, "SetBridgeClientVersion" },
-    {11, "GetCalibrationDataFromFDR" },
-    { 0, NULL}
-};
-
-static const value_string bKitKernelCmdIds[] = {
-    {1, "GetCommProtocolVersion" },
-    {2, "ResetSensor" },
-    {3, "StartEnroll" },
-    {4, "StartMatch" },
-    {5, "SetTemplateListSU" },
-    {6, "GetTemplateListSUSize" },
-    {7, "GetTemplateListSU" },
-    {8, "GetAlignmentData" },
-    {9, "GetCaptureBuffer" },
-    {0xA, "GetDebugImageData" },
-    {0xB, "GetDebugImageData2" },
-    {0xC, "Cancel" },
-    {0xD, "RemoveIdentity" },
-    {0xE, "ContinueEnroll" },
-    {0xF, "GetMaxIdentityCount" },
-    {0x10, "GetProvisioningState" },
-    {0x11, "GetNodeTopology" },
-    {0x14, "NotifyDisplayPowerChanged" },
-    {0x15, "RegisterDSID" },
-    {0x16, "RegisterStoreToken" },
-    {0x17, "GetCountersignedStoreToken" },
-    {0x1A, "GetCalibrationDataInfo" },
-    {0x1B, "GetUserSerializedTemplateList" },
-    {0x1C, "BumbCatacombCounter" },
-    {0x1D, "GetSensorCalibrationStatus" },
-    {0x1, "GetUserSerializedTemplateListSize" },
-    {0x20, "SetCalibrationData" },
-    {0x22, "GetModuleSerialNumber" },
-    {0x23, "PullMatchPolicyInfoData" },
-    {0x24, "LoadCustomPatch" },
-    {0x26, "StartDetectFinger" },
-    {0x27, "GetSKSLockState" },
-    {0x28, "GetBiometricKitdInfo" },
-    {0x29, "GetDiagnosticInfo" },
-    {0x2A, "GetLoggingType" },
-    {0x2B, "ExtractStatusMessageData" },
-    {0x2C, "SetBioLogState" },
-    {0x2D, "SetUserDSID" },
-    {0x2E, "GetProtectedConfiguration" },
-    {0x2F, "SetProtectedConfiguration" },
-    {0x30, "GetEnabledForUnlock" },
-    {0x31, "Unknown0x31" },
-    {0x32, "HasIdentity" },
-    {0x33, "GetTimestampCollection" },
-    {0x34, "ResetAppleConnectCounter" },
-    {0x35, "GetSensorInfo" },
-    {0x38, "GetIdentityUUID" },
-    {0x39, "DropUnlockToken" },
-    {0x3A, "GetIdentityHash" },
-    {0x3C, "GetCatacombState" },
-    {0x3D, "GetUserSecureDataLength" },
-    {0x3E, "GetUserSecureData" },
-    {0x3F, "BumpUserSecureDataCounter" },
-    {0x40, "SetUserSecureData" },
-    {0x41, "GetFreeIdentityCount" },
-    {0x42, "GetUserTemplateList" },
-    {0x43, "GetSystemProtectedConfiguration" },
-    {0x45, "EnableBackgroundFdet" },
-    {0x46, "NotifyTouchIdButtonPressed" },
-    {0x47, "GetTemplateListCRC" },
-    {0x48, "RemoveUser" },
-    {0x49, "ForceBioLockout" },
-    {0x4A, "GetBioLockoutData" },
-    {0x4B, "SetBioLockoutData" },
-    {0x4C, "IsXartAvailable" },
-    { 0, NULL}
-};
-
-static int hf_bkit_response_in;
-static int hf_bkit_response_to;
-
-typedef struct _bkit_transaction_t {
-    uint32_t req_frame;
-    uint32_t rep_frame;
-} bkit_transaction_t;
-
-typedef struct _bkit_conv_info_t {
-    wmem_map_t *pdus;
-    //TODO: include command type
-} bkit_conv_info_t;
+    if (data_type == PLIST_DATA) {
+        uint64_t dataLen = 0;
+        const char *data = plist_get_data_ptr(data_obj, &dataLen);
+        unsigned char *copy = (unsigned char*)wmem_alloc(pinfo->pool, dataLen);
+        memcpy(copy, data, dataLen);
+        tvbuff_t *new_tvb = tvb_new_child_real_data(tvb, copy, dataLen, dataLen);
+        add_new_data_source(pinfo, new_tvb, srcName);
+        return new_tvb;
+    }
+    return NULL;
+}
 
 static int dissect_bkit_type9(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree,
         void *data _U_)
@@ -331,58 +224,84 @@ dissect_bkit(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree,
             plist_get_uint_val(plist_array_get_item(message,0), &bkit_cmd_id);
             // first item is cmd, uint64
             proto_tree_add_uint(bkit_tree, hf_bkit_cmd_id, tvb, 0,0, bkit_cmd_id);
-            col_append_sep_fstr(pinfo->cinfo, COL_INFO, " ", "%s", try_val_to_str(bkit_cmd_id, bKitCommandIds));
+            if (!bkit_env_is_reply)
+                col_append_sep_fstr(pinfo->cinfo, COL_INFO, " ", "%s", try_val_to_str(bkit_cmd_id, bKitCommandIds));
 #define BKKernelMagic 0x4d42
-            // TYPE 9 (reply):
-            // [9, 3825172480, data, time?, 2452227927]
-            // TYPE 3:
-            // [3, 0, data]
-            // TYPE 0 is a reply:
-            // [0, uuid/data/int] or even just [0]
-            if (bkit_cmd_id == 3 || bkit_cmd_id == 9 || (bkit_cmd_id == 0 && bkit_env_is_reply )) {
-                // kernel command
-                // second item is 0
-                // third item is data
-                plist_t data_obj = plist_array_get_item(message,2);
-                plist_type data_type = plist_get_node_type(data_obj);
-
-                if (data_type == PLIST_DATA) {
-                    uint64_t kCmdDataLen = 0;
-                    const char *kCmdData = plist_get_data_ptr(data_obj, &kCmdDataLen);
-                    unsigned char *copy = (unsigned char*)wmem_alloc(pinfo->pool, kCmdDataLen);
-                    memcpy(copy, kCmdData, kCmdDataLen);
-                    tvbuff_t *krn_tvb = tvb_new_child_real_data(tvb, copy, kCmdDataLen, kCmdDataLen);
-                    if (bkit_cmd_id == 3) {
-                        add_new_data_source(pinfo, krn_tvb, "BKit Kernel Command Data");
-                        dissect_bkit_kernel_data(krn_tvb, pinfo, bkit_tree, data);
-                        // fourth item is replysize
-                    } else if (bkit_cmd_id == 9) {
-                        add_new_data_source(pinfo, krn_tvb, "BKit Kernel Type 9 Data");
-                        dissect_bkit_type9(krn_tvb, pinfo, bkit_tree, data);
+            if (bkit_cmd_id == 0) {
+                if (bkit_env_is_reply) {
+                    // TYPE 0 is a reply:
+                    uint32_t arrayLen = plist_array_get_size(message);
+                    if (arrayLen == 1) {
+                        // if just [0] then this is macos replying to a type 9?
+                        col_append_sep_fstr(pinfo->cinfo, COL_INFO, " ", "Type 0 ACK");
+                    } else {
+                        // [0, BK_NULL/data/int]
+                        plist_t data_obj = plist_array_get_item(message,1);
+                        plist_type data_type = plist_get_node_type(data_obj);
+                        if (data_type == PLIST_INT) {
+                            uint64_t val;
+                            plist_get_int_val(data_obj, &val);
+                            col_append_sep_fstr(pinfo->cinfo, COL_INFO, " ", "Type 0 int %ld", val);
+                        } else if (data_type == PLIST_STRING) {
+                            uint64_t len;
+                            const char *str = plist_get_string_ptr(data_obj, &len);
+                            if (strcmp(str, BK_NULL)) {
+                                col_append_sep_fstr(pinfo->cinfo, COL_INFO, " ", "Type 0 \"%s\"", str);
+                            } else {
+                                col_append_sep_fstr(pinfo->cinfo, COL_INFO, " ", "Type 0 BK_NULL");
+                            }
+                        } else if (data_type == PLIST_DATA) {
+                            //const char *msgData;
+                            //uint64_t length;
+                            //msgData = plist_get_data_ptr(data_obj, &length);
+                            col_append_sep_fstr(pinfo->cinfo, COL_INFO, " ", "Type 0 DATA");
+                            tvbuff_t *krn_tvb _U_= add_data_src_from_plist_data(tvb, pinfo, data_obj,
+                        "BKit Data");
+                        }
                     }
                 } else {
-                    // lets just make it into json, im lazy
-                    char * json_dest = 0;
-                    uint32_t json_len = 0;
-                    plist_err_t ret = plist_to_json(data_obj, &json_dest, &json_len, 0);
-                    if (!ret) {
-                        unsigned char *decompressed_buffer = (unsigned char*)wmem_alloc(pinfo->pool, json_len);
-                        memcpy(decompressed_buffer, json_dest, json_len);
-                        plist_mem_free(json_dest);
-                        tvbuff_t *next_tvb = tvb_new_child_real_data(tvb, decompressed_buffer, json_len, json_len);
-                        add_new_data_source(pinfo, next_tvb, "message data");
-
+                    //Type 0 request
+                }
+            } else if (bkit_cmd_id == 3) {
+                // TYPE 3:
+                // [3, 0, data]
+                // fourth item is replysize?
+                plist_t data_obj = plist_array_get_item(message,2);
+                tvbuff_t *krn_tvb = add_data_src_from_plist_data(
+                        tvb, pinfo, data_obj,
+                        "BKit Data");
+                dissect_bkit_kernel_data(krn_tvb, pinfo, bkit_tree, data);
+            } else if (bkit_cmd_id == 9) {
+                // TYPE 9 (message from t2):
+                // [9, 3825172480, data, time?, 2452227927]
+                plist_t data_obj = plist_array_get_item(message,2);
+                tvbuff_t *new_tvb = add_data_src_from_plist_data(
+                        tvb, pinfo, data_obj,
+                        "BKit Data");
+                col_append_sep_fstr(pinfo->cinfo, COL_INFO, " ", "data");
+                dissect_bkit_type9(new_tvb,pinfo, bkit_tree, data);
+            } else if (bkit_cmd_id == 12) {
+                //TYPE 12 (from macos)
+                // either [12, 0] or [12, bool]
+                plist_t data_obj = plist_array_get_item(message,1);
+                plist_type data_type = plist_get_node_type(data_obj);
+                if (data_type == PLIST_INT) {
+                    uint64_t val;
+                    plist_get_int_val(data_obj, &val);
+                    col_append_sep_fstr(pinfo->cinfo, COL_INFO, " ", "%ld", val);
+                } else if (data_type == PLIST_BOOLEAN) {
+                    if (plist_bool_val_is_true(data_obj)) {
+                        col_append_sep_fstr(pinfo->cinfo, COL_INFO, " ", "true");
+                    } else {
+                        col_append_sep_fstr(pinfo->cinfo, COL_INFO, " ", "false");
                     }
-
                 }
             }
         } else {
             // ping
             col_add_fstr(pinfo->cinfo, COL_INFO, "Bkit Ping");
         }
-
     }
-    //TODO: free plist
     plist_free(envelope);
 
     return tvb_captured_length(tvb);
